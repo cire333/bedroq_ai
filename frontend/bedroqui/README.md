@@ -45,8 +45,30 @@ You can learn more in the [Create React App documentation](https://facebook.gith
 
 To learn React, check out the [React documentation](https://reactjs.org/).
 
-# Merging in kicad
+# Micro-Frontend Architecture with Git Subtrees
+
+Use Git subtrees to pull and maintain upstream changes from all three projects
+Create a monorepo structure with clear separation of concerns
+Implement a shared design system based on Material-UI
+
+bedroq-dashboard/
+├── packages/
+│   ├── kicanvas-integration/     # KiCanvas as subtree
+│   ├── chatbot-integration/      # Chatbot UI as subtree  
+│   ├── material-dashboard/       # Your main dashboard
+│   └── shared-ui/                # Shared components & theme
+├── apps/
+│   └── main-dashboard/          # Main application
+└── tools/
+    └── build-scripts/
+
+# Integration of kicad-Canvas
 
 ### Add KiCanvas as subtree
 git subtree add --prefix=frontend/bedroqui/packages/kicanvas-integration \
+  https://github.com/theacodes/kicanvas.git main --squash
+
+
+### Update KiCanvas as subtree
+git subtree add --prefix=packages/kicanvas-integration \
   https://github.com/theacodes/kicanvas.git main --squash
