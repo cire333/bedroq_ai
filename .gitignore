@@ -16,6 +16,8 @@ static/
 # testing
 /coverage
 
+
+
 # production
 /build
 
@@ -32,3 +34,4 @@ yarn-error.log*
 
 # misc mixed up data
 digikey-kicad-library/
+data/output/
