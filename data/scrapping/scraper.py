@@ -9,6 +9,9 @@ This script scrapes datasheets from datasheets.com by:
 3. Collecting component URLs from each manufacturer
 4. Downloading datasheets in batches
 5. Logging all downloads to prevent re-downloads
+
+Example usage: 
+  python scraper.py -o ../datasheets --batch-size 5 --delay 1.0 --verbose -m T
 """
 
 import argparse
