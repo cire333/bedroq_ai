@@ -4,7 +4,7 @@
 *.log
 *.pdf
 *.txt
-*.json
+# *.json
 
 # dependencies
 node_modules/
