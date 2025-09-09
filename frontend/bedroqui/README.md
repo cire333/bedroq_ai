@@ -44,3 +44,9 @@ You don’t have to ever use `eject`. The curated feature set is suitable for sm
 You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
 
 To learn React, check out the [React documentation](https://reactjs.org/).
+
+# Merging in kicad
+
+### Add KiCanvas as subtree
+git subtree add --prefix=frontend/bedroqui/packages/kicanvas-integration \
+  https://github.com/theacodes/kicanvas.git main --squash
