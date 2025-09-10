@@ -26,8 +26,14 @@
     "jsx": "react-jsx"
   },
   "include": [
-    "src"
-  ],
+    "apps/main-dashboard/dashboard", 
+    "apps/main-dashboard/shared-theme", 
+    "apps/main-dashboard/App.test.tsx", 
+    "apps/main-dashboard/App.tsx", 
+    "apps/main-dashboard/index.tsx", 
+    "apps/main-dashboard/react-app-env.d.ts", 
+    "apps/main-dashboard/reportWebVitals.ts", 
+    "apps/main-dashboard/setupTests.ts"  ],
   "references": [
     { "path": "./packages/shared-ui" },
     { "path": "./packages/kicanvas-integration" },
