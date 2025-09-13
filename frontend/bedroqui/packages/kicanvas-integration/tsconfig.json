@@ -18,9 +18,8 @@
         /* Emit */
         // "outDir": "./build", /* Specify an output folder for all emitted files. */
         // "sourceMap": true,
-        /* manual overrides */
-        // "noEmit": true /* Disable emitting files from a compilation. */
         "composite": true,
+        "noEmit": true /* Disable emitting files from a compilation. */,
         /* Interop Constraints */
         // "preserveSymlinks": true,                         /* Disable resolving symlinks to their realpath. This correlates to the same flag in node. */
         "forceConsistentCasingInFileNames": true /* Ensure that casing is correct in imports. */,

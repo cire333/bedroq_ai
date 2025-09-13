@@ -31,7 +31,7 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "build:kicanvas": "cd packages/kicanvas-integration && npm run build",
+    "build:kicanvas": "cd packages/kicanvas-integration && npm run serve",
     "build:shared": "cd packages/shared-ui && npm run build",
     "build:all": "npm run build:kicanvas && npm run build:chatbot && npm run build:shared",
     "update:upstream": "./tools/update-subtrees.sh",

@@ -106,7 +106,7 @@ export default function App(props: AppProps): React.ReactElement {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/projects" element={<ProjectContainer />} />
-            <Route path="/review" element={<ReviewContainer />} />
+            <Route path="/reviews" element={<ReviewContainer />} />
             <Route path="/users" element={<UsersContainer />} />
             <Route path="/devices" element={<DeviceContainer />} />
             <Route path="/firmwares" element={<FirmwareContainer />} />

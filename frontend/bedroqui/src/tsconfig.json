@@ -6,6 +6,7 @@
       "dom.iterable",
       "esnext"
     ],
+    "baseUrl": ".",
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -15,13 +16,13 @@
     "noFallthroughCasesInSwitch": true,
     "module": "esnext",
     "moduleResolution": "node",
+    "composite": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    // "noEmit": true,
-    "composite": true,
     "jsx": "react-jsx"
   },
   "include": [
-    "components",
-  ]
+    "."
+], 
+"exclude": []
 }

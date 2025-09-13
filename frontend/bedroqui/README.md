@@ -72,3 +72,29 @@ git subtree add --prefix=frontend/bedroqui/packages/kicanvas-integration \
 ### Update KiCanvas as subtree
 git subtree add --prefix=packages/kicanvas-integration \
   https://github.com/theacodes/kicanvas.git main --squash
+
+
+###
+If the main program cannot find the the kicanvas funcationality or individual elements you might need to run this manually
+
+# Make sure KiCanvas is built and copied
+cd vendor/kicanvas
+npm run build
+cp dist/kicanvas.js ../../public/
+
+src/
+├── types/
+│   └── kicanvas.d.ts                    # TypeScript declarations
+├── components/
+│   └── kicanvas/
+│       ├── KiCanvasBase.tsx             # Fixed base component
+│       ├── KiCanvasViewer.tsx           # Enhanced viewer
+│       ├── KiCanvasController.ts        # Controller class
+│       ├── useKiCanvas.ts               # React hook
+│       └── index.ts                     # Exports
+public/
+└── kicanvas.js                          # Built KiCanvas file
+
+
+# If updates exist, rebuild
+TODO: cd vendor/kicanvas && npm run build && cp dist/kicanvas.js ../../public/
