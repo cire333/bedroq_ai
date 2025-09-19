@@ -18,7 +18,7 @@ import {
   datePickersCustomizations,
   treeViewCustomizations,
 } from '../theme/customizations';
-import { KiCanvasViewer } from '../components/kicanvas/KiCanvasViewer';
+// import { KiCanvasViewer } from '../components/kicanvas/KiCanvasViewer';
 import Copyright from '../internals/components/Copyright';
 
 const xThemeComponents = {
@@ -33,7 +33,7 @@ export const ProjectContainer:React.FC = () => {
     <AppTheme themeComponents={xThemeComponents}>
       <CssBaseline enableColorScheme />
       <Box sx={{ display: 'flex' }}>
-        <SideMenu />
+        {/* <SideMenu /> */}
         <AppNavbar />
         
         {/* Main content */}
@@ -57,22 +57,7 @@ export const ProjectContainer:React.FC = () => {
           >
             <Header />
             <ProjectGrid />
-            
-            <Typography component="h2" variant="h6" sx={{ mb: 2 }}>
-              Project Overview
-            </Typography>
-              <KiCanvasViewer
-                      src="/files/connections.kicad_sch"
-                      showToolbar={true}
-                      showStatusBar={true}
-                      onLoad={(controller) => {
-                        console.log('KiCanvas loaded!', controller);
-                      }}
-                      onError={(error) => {
-                        console.error('Failed to load:', error);
-                      }}
-                    />
-            
+             
           </Stack>
         </Box>
       </Box>

@@ -3,24 +3,20 @@ import type {} from '@mui/x-date-pickers/themeAugmentation';
 import type {} from '@mui/x-charts/themeAugmentation';
 import type {} from '@mui/x-data-grid-pro/themeAugmentation';
 import type {} from '@mui/x-tree-view/themeAugmentation';
-import { alpha } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
-import AppNavbar from './components/AppNavbar';
-import Header from './components/Header';
-import MainGrid from './components/MainGrid';
-import SideMenu from './components/SideMenu';
-import AppTheme from '../shared-theme/AppTheme';
-import Copyright from './internals/components/Copyright';
-
-
+import AppNavbar from '../components/AppNavbar';
+import Header from '../components/Header';
+import BedroqGrid from '../components/grids/BedroqGrid';
+import AppTheme from '../../shared-theme/AppTheme';
 import {
   chartsCustomizations,
   dataGridCustomizations,
   datePickersCustomizations,
   treeViewCustomizations,
-} from './theme/customizations';
+} from '../theme/customizations';
+import Copyright from '../internals/components/Copyright';
 
 const xThemeComponents = {
   ...chartsCustomizations,
@@ -29,24 +25,23 @@ const xThemeComponents = {
   ...treeViewCustomizations,
 };
 
-export default function Dashboard(props: { disableCustomTheme?: boolean }) {
+export const ProjectsContainer:React.FC = () => {
   return (
-    <AppTheme {...props} themeComponents={xThemeComponents}>
+    <AppTheme themeComponents={xThemeComponents}>
       <CssBaseline enableColorScheme />
       <Box sx={{ display: 'flex' }}>
-        <SideMenu />
         <AppNavbar />
+        
         {/* Main content */}
         <Box
           component="main"
           sx={(theme) => ({
             flexGrow: 1,
             backgroundColor: theme.palette.mode === 'light' ? theme.palette.grey[100] : theme.palette.background.default,
-              // ? `rgba(${theme.vars.palette.background.defaultChannel} / 1)`
-              // : alpha(theme.palette.background.default, 1),
             overflow: 'auto',
           })}
         >
+          
           <Stack
             spacing={2}
             sx={{
@@ -57,11 +52,15 @@ export default function Dashboard(props: { disableCustomTheme?: boolean }) {
             }}
           >
             <Header />
-            <MainGrid />
+            <BedroqGrid />
+             
           </Stack>
-        </Box>  
+        </Box>
       </Box>
       <Copyright sx={{ my: 4 }} />
     </AppTheme>
   );
 }
+
+
+// Cannot read properties of undefine (reading 'setTransform')

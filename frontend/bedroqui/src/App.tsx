@@ -1,9 +1,11 @@
 
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
-import { UsersContainer } from './dashboard/containers/UserContainer';
-import { DeviceContainer } from './dashboard/containers/DevicesContainer';
+import { UsersContainer } from './dashboard/containers/UsersContainer';
+import { DevicesContainer } from './dashboard/containers/DevicesContainer';
+import { ProjectsContainer } from './dashboard/containers/ProjectsContainer';
 import { ProjectContainer } from './dashboard/containers/ProjectContainer';
+import ProjectSetupContainer from './dashboard/containers/ProjectSetupContainer';
 import { FirmwareContainer } from './dashboard/containers/FirmwaresContainer';
 import { ReviewContainer } from './dashboard/containers/ReviewContainer';
 
@@ -105,12 +107,14 @@ export default function App(props: AppProps): React.ReactElement {
         <DashboardLayout>
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/projects" element={<ProjectContainer />} />
+            <Route path="/projects" element={<ProjectsContainer />} />
             <Route path="/reviews" element={<ReviewContainer />} />
             <Route path="/users" element={<UsersContainer />} />
-            <Route path="/devices" element={<DeviceContainer />} />
+            <Route path="/devices" element={<DevicesContainer />} />
             <Route path="/firmwares" element={<FirmwareContainer />} />
             <Route path="/users/:id" element={<UsersContainer />} />
+            <Route path="/projects/:id" element={<ProjectContainer />} />
+            <Route path="/project-setup" element={<ProjectSetupContainer />} />
             {/* Placeholder routes for other menu items */}
             <Route path="/analytics" element={<Box sx={{ p: 3 }}><h1>Analytics Page</h1><p>This page is under construction.</p></Box>} />
             <Route path="/feedback" element={<Box sx={{ p: 3 }}><h1>Feedback Page</h1><p>This page is under construction.</p></Box>} />
