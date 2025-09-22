@@ -24,16 +24,14 @@ const mainListItems = [
   { text: 'Configuration', icon: <AnalyticsRoundedIcon />, path: '/configurations' },
   { text: 'Firmware Manager', icon: <PeopleRoundedIcon />, path: '/firmwares' },
   { text: 'Data Review', icon: <AssignmentRoundedIcon />, path: '/data-review' },
-  { text: 'Users', icon: <PeopleRoundedIcon />, path: '/users'  },
+  
 ];
 
 const secondaryListItems = [
   { text: 'Settings', icon: <SettingsRoundedIcon />, path: '/settings' },
+  { text: 'Users', icon: <PeopleRoundedIcon />, path: '/users'  },
   { text: 'About', icon: <InfoRoundedIcon />, path: '/about' },
-  { text: 'Feedback', icon: <HelpRoundedIcon />, path: '/feedback' },
 ];
-
-
 
 export default function MenuContent() {
   const navigate = useNavigate();

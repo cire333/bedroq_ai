@@ -1,0 +1,42 @@
+import { Barrier } from "../../base/async";
+import { Disposables, type IDisposable } from "../../base/disposable";
+import { BBox, Vec2 } from "../../base/math";
+import { Renderer } from "../../graphics";
+import { type KiCanvasEventMap } from "./events";
+import { ViewLayerSet } from "./view-layers";
+import { Viewport } from "./viewport";
+export declare abstract class Viewer extends EventTarget {
+    #private;
+    canvas: HTMLCanvasElement;
+    protected interactive: boolean;
+    renderer: Renderer;
+    viewport: Viewport;
+    layers: ViewLayerSet;
+    mouse_position: Vec2;
+    loaded: Barrier;
+    protected disposables: Disposables;
+    protected setup_finished: Barrier;
+    constructor(canvas: HTMLCanvasElement, interactive?: boolean);
+    dispose(): void;
+    addEventListener<K extends keyof KiCanvasEventMap>(type: K, listener: ((this: Viewer, ev: KiCanvasEventMap[K]) => void) | {
+        handleEvent: (ev: KiCanvasEventMap[K]) => void;
+    } | null, options?: boolean | AddEventListenerOptions): IDisposable;
+    protected abstract create_renderer(canvas: HTMLCanvasElement): Renderer;
+    setup(): Promise<void>;
+    protected on_viewport_change(): void;
+    protected on_mouse_change(e: MouseEvent): void;
+    abstract load(src: any): Promise<void>;
+    protected resolve_loaded(value: boolean): void;
+    abstract paint(): void;
+    protected on_draw(): void;
+    draw(): void;
+    protected on_pick(mouse: Vec2, items: ReturnType<ViewLayerSet["query_point"]>): void;
+    select(item: BBox | null): void;
+    get selected(): BBox | null;
+    set selected(bb: BBox | null);
+    private _set_selected;
+    get selection_color(): any;
+    protected paint_selected(): void;
+    abstract zoom_to_page(): void;
+    zoom_to_selection(): void;
+}

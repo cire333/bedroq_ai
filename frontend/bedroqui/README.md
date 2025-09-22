@@ -45,8 +45,56 @@ You can learn more in the [Create React App documentation](https://facebook.gith
 
 To learn React, check out the [React documentation](https://reactjs.org/).
 
-# Merging in kicad
+# Micro-Frontend Architecture with Git Subtrees
+
+Use Git subtrees to pull and maintain upstream changes from all three projects
+Create a monorepo structure with clear separation of concerns
+Implement a shared design system based on Material-UI
+
+bedroq-dashboard/
+├── packages/
+│   ├── kicanvas-integration/     # KiCanvas as subtree
+│   ├── chatbot-integration/      # Chatbot UI as subtree  
+│   ├── material-dashboard/       # Your main dashboard
+│   └── shared-ui/                # Shared components & theme
+├── apps/
+│   └── main-dashboard/          # Main application
+└── tools/
+    └── build-scripts/
+
+# Integration of kicad-Canvas
 
 ### Add KiCanvas as subtree
 git subtree add --prefix=frontend/bedroqui/packages/kicanvas-integration \
   https://github.com/theacodes/kicanvas.git main --squash
+
+
+### Update KiCanvas as subtree
+git subtree add --prefix=packages/kicanvas-integration \
+  https://github.com/theacodes/kicanvas.git main --squash
+
+
+###
+If the main program cannot find the the kicanvas funcationality or individual elements you might need to run this manually
+
+# Make sure KiCanvas is built and copied
+cd vendor/kicanvas
+npm run build
+cp dist/kicanvas.js ../../public/
+
+src/
+├── types/
+│   └── kicanvas.d.ts                    # TypeScript declarations
+├── components/
+│   └── kicanvas/
+│       ├── KiCanvasBase.tsx             # Fixed base component
+│       ├── KiCanvasViewer.tsx           # Enhanced viewer
+│       ├── KiCanvasController.ts        # Controller class
+│       ├── useKiCanvas.ts               # React hook
+│       └── index.ts                     # Exports
+public/
+└── kicanvas.js                          # Built KiCanvas file
+
+
+# If updates exist, rebuild
+TODO: cd vendor/kicanvas && npm run build && cp dist/kicanvas.js ../../public/

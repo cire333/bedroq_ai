@@ -1,0 +1,69 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@shared/ui": ["packages/shared-ui/src"],
+      "@kicanvas/*": ["packages/kicanvas-integration/src/*"]
+    },
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "apps/main-dashboard/dashboard", 
+    "apps/main-dashboard/shared-theme", 
+    "apps/main-dashboard/App.test.tsx", 
+    "apps/main-dashboard/App.tsx", 
+    "apps/main-dashboard/index.tsx", 
+    "apps/main-dashboard/react-app-env.d.ts", 
+    "apps/main-dashboard/reportWebVitals.ts", 
+    "apps/main-dashboard/setupTests.ts"  ],
+  "references": [
+    { "path": "./packages/shared-ui" },
+    { "path": "./packages/kicanvas-integration" },
+    { "path": "./apps/main-dashboard" }
+  ]
+}
+
+
+
+// {
+//   "compilerOptions": {
+//     "target": "ES2020",
+//     "useDefineForClassFields": true,
+//     "lib": ["ES2020", "DOM", "DOM.Iterable"],
+//     "module": "ESNext",
+//     "skipLibCheck": true,
+//     "moduleResolution": "bundler",
+//     "allowImportingTsExtensions": true,
+//     "resolveJsonModule": true,
+//     "isolatedModules": true,
+//     "noEmit": true,
+//     "jsx": "react-jsx",
+//     "strict": true,
+//     "noUnusedLocals": true,
+//     "noUnusedParameters": true,
+//     "noFallthroughCasesInSwitch": true,
+//     "esModuleInterop": true,
+//     "allowSyntheticDefaultImports": true,
+//     "forceConsistentCasingInFileNames": true
+//   },
+//   "include": ["src"],
+//   "references": [{ "path": "./tsconfig.node.json" }]
+// }

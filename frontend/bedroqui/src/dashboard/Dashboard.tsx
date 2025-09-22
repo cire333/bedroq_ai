@@ -12,6 +12,9 @@ import Header from './components/Header';
 import MainGrid from './components/MainGrid';
 import SideMenu from './components/SideMenu';
 import AppTheme from '../shared-theme/AppTheme';
+import Copyright from './internals/components/Copyright';
+
+
 import {
   chartsCustomizations,
   dataGridCustomizations,
@@ -56,8 +59,9 @@ export default function Dashboard(props: { disableCustomTheme?: boolean }) {
             <Header />
             <MainGrid />
           </Stack>
-        </Box>
+        </Box>  
       </Box>
+      <Copyright sx={{ my: 4 }} />
     </AppTheme>
   );
 }

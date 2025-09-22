@@ -30,7 +30,6 @@ export default function Header(): React.ReactElement {
         <MenuButton showBadge aria-label="Open notifications">
           <NotificationsRoundedIcon />
         </MenuButton>
-        <ColorModeIconDropdown />
       </Stack>
     </Stack>
   );

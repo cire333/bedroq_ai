@@ -18,6 +18,8 @@ import {
   datePickersCustomizations,
   treeViewCustomizations,
 } from '../theme/customizations';
+// import { KiCanvasViewer } from '../components/kicanvas/KiCanvasViewer';
+import Copyright from '../internals/components/Copyright';
 
 const xThemeComponents = {
   ...chartsCustomizations,
@@ -31,8 +33,9 @@ export const ProjectContainer:React.FC = () => {
     <AppTheme themeComponents={xThemeComponents}>
       <CssBaseline enableColorScheme />
       <Box sx={{ display: 'flex' }}>
-        <SideMenu />
+        {/* <SideMenu /> */}
         <AppNavbar />
+        
         {/* Main content */}
         <Box
           component="main"
@@ -42,6 +45,7 @@ export const ProjectContainer:React.FC = () => {
             overflow: 'auto',
           })}
         >
+          
           <Stack
             spacing={2}
             sx={{
@@ -53,12 +57,14 @@ export const ProjectContainer:React.FC = () => {
           >
             <Header />
             <ProjectGrid />
-            <Typography component="h2" variant="h6" sx={{ mb: 2 }}>
-              Project Overview
-            </Typography>
+             
           </Stack>
         </Box>
       </Box>
+      <Copyright sx={{ my: 4 }} />
     </AppTheme>
   );
 }
+
+
+// Cannot read properties of undefine (reading 'setTransform')
