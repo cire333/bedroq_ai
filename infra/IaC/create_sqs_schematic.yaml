@@ -1,0 +1,35 @@
+Stage1ProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-stage1-processing"
+      VisibilityTimeoutSeconds: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt Stage1DLQ.Arn
+        maxReceiveCount: 3
+
+  Stage1DLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-stage1-dlq"
+
+  Stage2ProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-stage2-processing"
+      VisibilityTimeoutSeconds: 300
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt Stage2DLQ.Arn
+        maxReceiveCount: 3
+
+  Stage2DLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-stage2-dlq"
+
+  FinalProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-final-processing"
+      VisibilityTimeoutSeconds: 180
