@@ -1,35 +1,50 @@
-Stage1ProcessingQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub "${AWS::StackName}-stage1-processing"
-      VisibilityTimeoutSeconds: 300
-      MessageRetentionPeriod: 1209600
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt Stage1DLQ.Arn
-        maxReceiveCount: 3
+DatasheetProcessingQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-datasheet-processing"
+    VisibilityTimeoutSeconds: 300
+    MessageRetentionPeriod: 1209600
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt DatasheetDLQ.Arn
+      maxReceiveCount: 3
 
-  Stage1DLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub "${AWS::StackName}-stage1-dlq"
+DatasheetDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-datasheet-dlq"
 
-  Stage2ProcessingQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub "${AWS::StackName}-stage2-processing"
-      VisibilityTimeoutSeconds: 300
-      MessageRetentionPeriod: 1209600
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt Stage2DLQ.Arn
-        maxReceiveCount: 3
+SchematicJSONEncodingQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-schematic-json-encodeing"
+    VisibilityTimeoutSeconds: 300
+    MessageRetentionPeriod: 1209600
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt SchematicJSONEncodingDLQ.Arn
+      maxReceiveCount: 3
 
-  Stage2DLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub "${AWS::StackName}-stage2-dlq"
+SchematicJSONEncodingDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-schematic-json-encoding-dlq"
 
-  FinalProcessingQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub "${AWS::StackName}-final-processing"
-      VisibilityTimeoutSeconds: 180
+EmbeddingProcessingQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-embedding-processing"
+    VisibilityTimeoutSeconds: 300
+    MessageRetentionPeriod: 1209600
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt EmbeddingDLQ.Arn
+      maxReceiveCount: 3
+
+EmbeddingDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-embedding-dlq"
+
+# FinalProcessingQueue:
+#   Type: AWS::SQS::Queue
+#   Properties:
+#     QueueName: !Sub "${AWS::StackName}-final-processing"
+#     VisibilityTimeoutSeconds: 180
