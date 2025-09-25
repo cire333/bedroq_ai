@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'Document Processing Pipeline - Standalone Upload Lambda'
+Description: 'Document Processing Pipeline - Complete with Schematic Processing'
 
 Parameters:
   Environment:
@@ -21,7 +21,7 @@ Globals:
         ENVIRONMENT: !Ref Environment
         DOCUMENT_BUCKET: !Ref DocumentBucket
         PROCESSED_DATA_BUCKET: !Ref ProcessedDataBucket
-        DOCUMENT_PROCESSING_TOPIC: !Ref DocumentProcessingTopic
+        DOCUMENT_PROCESSING_TOPIC_ARN: !Ref DocumentProcessingTopic
   Api:
     Cors:
       AllowMethods: "'POST, OPTIONS, GET'"
@@ -66,14 +66,65 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
-  # SNS Topic for document processing
+  # SNS Topics
   DocumentProcessingTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub '${AWS::StackName}-document-processing-${Environment}'
       DisplayName: Document Processing Notifications
 
-  # DynamoDB Table (instead of RDS for now)
+  Stage2ProcessingTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-stage2-processing-${Environment}'
+      DisplayName: Stage 2 Processing Notifications
+
+  # SQS Queues
+  SchematicProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-schematic-processing-${Environment}'
+      VisibilityTimeoutSeconds: 600  # 10 minutes for processing time
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SchematicProcessingDLQ.Arn
+        maxReceiveCount: 3
+
+  SchematicProcessingDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-schematic-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # SNS Subscription: DocumentProcessingTopic -> SchematicProcessingQueue
+  SchematicProcessingSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sqs
+      TopicArn: !Ref DocumentProcessingTopic
+      Endpoint: !GetAtt SchematicProcessingQueue.Arn
+      FilterPolicy:
+        stage: ["stage1"]
+
+  # SQS Queue Policy to allow SNS to send messages
+  SchematicProcessingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SchematicProcessingQueue
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt SchematicProcessingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref DocumentProcessingTopic
+
+  # DynamoDB Table
   ProcessingJobsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -97,7 +148,7 @@ Resources:
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
 
-  # Lambda execution role
+  # IAM Roles
   UploadHandlerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -152,7 +203,72 @@ Resources:
                   - sns:Publish
                 Resource: !Ref DocumentProcessingTopic
 
-  # Upload Handler Lambda Function
+  SchematicProcessorExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${DocumentBucket}/*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProcessedDataBucket}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${DocumentBucket}'
+                  - !Sub 'arn:aws:s3:::${ProcessedDataBucket}'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt ProcessingJobsTable.Arn
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !GetAtt SchematicProcessingQueue.Arn
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: 
+                  - !Ref Stage2ProcessingTopic
+
+  # Lambda Functions
   UploadHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -165,7 +281,6 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref ProcessingJobsTable
-          DOCUMENT_PROCESSING_TOPIC_ARN: !Ref DocumentProcessingTopic
       Events:
         UploadApi:
           Type: Api
@@ -183,7 +298,28 @@ Resources:
             Path: /status/{processing_id}
             Method: GET
 
-  # Test function to verify setup
+  SchematicProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-schematic-processor-${Environment}'
+      Description: Processes KiCad schematic files
+      CodeUri: ./lambda-functions/schematic-processor/
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt SchematicProcessorExecutionRole.Arn
+      MemorySize: 1024
+      Timeout: 600  # 10 minutes for processing
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ProcessingJobsTable
+          STAGE2_PROCESSING_TOPIC_ARN: !Ref Stage2ProcessingTopic
+      Events:
+        SchematicProcessingQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SchematicProcessingQueue.Arn
+            BatchSize: 1
+
+  # Test function
   TestFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -197,11 +333,24 @@ Resources:
         def lambda_handler(event, context):
             return {
                 'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Content-Type': 'application/json'
+                },
                 'body': json.dumps({
-                    'message': 'Pipeline is working!',
+                    'message': 'Schematic processing pipeline is working!',
                     'environment': os.environ.get('ENVIRONMENT'),
-                    'bucket': os.environ.get('DOCUMENT_BUCKET'),
-                    'table': os.environ.get('DYNAMODB_TABLE', 'Not configured')
+                    'document_bucket': os.environ.get('DOCUMENT_BUCKET'),
+                    'processed_bucket': os.environ.get('PROCESSED_DATA_BUCKET'),
+                    'dynamodb_table': os.environ.get('DYNAMODB_TABLE', 'Not configured'),
+                    'pipeline_components': [
+                        'upload-handler',
+                        'schematic-processor',
+                        'sns-topics',
+                        'sqs-queues',
+                        's3-buckets',
+                        'dynamodb-table'
+                    ]
                 })
             }
       Handler: index.lambda_handler
@@ -210,6 +359,7 @@ Resources:
         Variables:
           ENVIRONMENT: !Ref Environment
           DOCUMENT_BUCKET: !Ref DocumentBucket
+          PROCESSED_DATA_BUCKET: !Ref ProcessedDataBucket
           DYNAMODB_TABLE: !Ref ProcessingJobsTable
       Events:
         TestApi:
@@ -243,8 +393,32 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-topic-arn-${Environment}'
 
+  Stage2ProcessingTopicArn:
+    Description: SNS Topic ARN for stage 2 processing
+    Value: !Ref Stage2ProcessingTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-stage2-topic-arn-${Environment}'
+
   ProcessingJobsTableName:
     Description: DynamoDB table for processing jobs
     Value: !Ref ProcessingJobsTable
     Export:
       Name: !Sub '${AWS::StackName}-table-name-${Environment}'
+
+  SchematicProcessingQueueUrl:
+    Description: SQS Queue URL for schematic processing
+    Value: !Ref SchematicProcessingQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-queue-url-${Environment}'
+
+  UploadHandlerFunctionArn:
+    Description: Upload Handler Lambda Function ARN
+    Value: !GetAtt UploadHandlerFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-upload-handler-arn-${Environment}'
+
+  SchematicProcessorFunctionArn:
+    Description: Schematic Processor Lambda Function ARN
+    Value: !GetAtt SchematicProcessorFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-schematic-processor-arn-${Environment}'
