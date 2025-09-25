@@ -20,6 +20,7 @@ static/
 
 # production
 /build
+.aws-sam/
 
 # misc
 .DS_Store
