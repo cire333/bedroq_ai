@@ -73,18 +73,18 @@ Resources:
       TopicName: !Sub '${AWS::StackName}-document-processing-${Environment}'
       DisplayName: Document Processing Notifications
 
-  Stage2ProcessingTopic:
+  EmbeddingProcessingTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub '${AWS::StackName}-stage2-processing-${Environment}'
-      DisplayName: Stage 2 Processing Notifications
+      TopicName: !Sub '${AWS::StackName}-embedding-processing-${Environment}'
+      DisplayName: Embedding Processing Notifications
 
   # SQS Queues
   SchematicProcessingQueue:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub '${AWS::StackName}-schematic-processing-${Environment}'
-      VisibilityTimeoutSeconds: 600  # 10 minutes for processing time
+      VisibilityTimeoutSeconds: 720  # 12 minutes (longer than Lambda timeout)
       MessageRetentionPeriod: 1209600  # 14 days
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt SchematicProcessingDLQ.Arn
@@ -95,6 +95,7 @@ Resources:
     Properties:
       QueueName: !Sub '${AWS::StackName}-schematic-dlq-${Environment}'
       MessageRetentionPeriod: 1209600  # 14 days
+      VisibilityTimeoutSeconds: 400  # 30  # Default for DLQ is fine XXX should move this back to 30 I think
 
   # SNS Subscription: DocumentProcessingTopic -> SchematicProcessingQueue
   SchematicProcessingSubscription:
@@ -266,7 +267,7 @@ Resources:
                 Action:
                   - sns:Publish
                 Resource: 
-                  - !Ref Stage2ProcessingTopic
+                  - !Ref EmbeddingProcessingTopic
 
   # Lambda Functions
   UploadHandlerFunction:
@@ -303,15 +304,15 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-schematic-processor-${Environment}'
       Description: Processes KiCad schematic files
-      CodeUri: ./lambda-functions/schematic-processor/
+      CodeUri: ./lambda-functions/schematic-processor-handler/
       Handler: lambda_function.lambda_handler
       Role: !GetAtt SchematicProcessorExecutionRole.Arn
       MemorySize: 1024
-      Timeout: 600  # 10 minutes for processing
+      Timeout: 10  # 300, 5 minutes should be plenty for most schematics, this needs to be fixed it is too low but I am not sure where the default of 30 was coming from in the error messages
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref ProcessingJobsTable
-          STAGE2_PROCESSING_TOPIC_ARN: !Ref Stage2ProcessingTopic
+          EMBEDDING_PROCESSING_TOPIC_ARN: !Ref EmbeddingProcessingTopic
       Events:
         SchematicProcessingQueue:
           Type: SQS
@@ -345,7 +346,8 @@ Resources:
                     'dynamodb_table': os.environ.get('DYNAMODB_TABLE', 'Not configured'),
                     'pipeline_components': [
                         'upload-handler',
-                        'schematic-processor',
+                        'schematic-processor (Stage 1)',
+                        'embedding-processor (coming soon)',
                         'sns-topics',
                         'sqs-queues',
                         's3-buckets',
@@ -393,11 +395,11 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-topic-arn-${Environment}'
 
-  Stage2ProcessingTopicArn:
-    Description: SNS Topic ARN for stage 2 processing
-    Value: !Ref Stage2ProcessingTopic
+  EmbeddingProcessingTopicArn:
+    Description: SNS Topic ARN for embedding processing
+    Value: !Ref EmbeddingProcessingTopic
     Export:
-      Name: !Sub '${AWS::StackName}-stage2-topic-arn-${Environment}'
+      Name: !Sub '${AWS::StackName}-embedding-topic-arn-${Environment}'
 
   ProcessingJobsTableName:
     Description: DynamoDB table for processing jobs
