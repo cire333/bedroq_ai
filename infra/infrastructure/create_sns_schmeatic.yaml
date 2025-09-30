@@ -1,0 +1,14 @@
+DocumentProcessingTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-document-processing"
+      
+  Stage1CompleteTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-stage1-complete"
+      
+  Stage2CompleteTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-stage2-complete"

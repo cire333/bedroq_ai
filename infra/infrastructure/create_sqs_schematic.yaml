@@ -1,0 +1,50 @@
+DatasheetProcessingQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-datasheet-processing"
+    VisibilityTimeoutSeconds: 300
+    MessageRetentionPeriod: 1209600
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt DatasheetDLQ.Arn
+      maxReceiveCount: 3
+
+DatasheetDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-datasheet-dlq"
+
+SchematicJSONEncodingQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-schematic-json-encodeing"
+    VisibilityTimeoutSeconds: 300
+    MessageRetentionPeriod: 1209600
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt SchematicJSONEncodingDLQ.Arn
+      maxReceiveCount: 3
+
+SchematicJSONEncodingDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-schematic-json-encoding-dlq"
+
+EmbeddingProcessingQueue:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-embedding-processing"
+    VisibilityTimeoutSeconds: 300
+    MessageRetentionPeriod: 1209600
+    RedrivePolicy:
+      deadLetterTargetArn: !GetAtt EmbeddingDLQ.Arn
+      maxReceiveCount: 3
+
+EmbeddingDLQ:
+  Type: AWS::SQS::Queue
+  Properties:
+    QueueName: !Sub "${AWS::StackName}-embedding-dlq"
+
+# FinalProcessingQueue:
+#   Type: AWS::SQS::Queue
+#   Properties:
+#     QueueName: !Sub "${AWS::StackName}-final-processing"
+#     VisibilityTimeoutSeconds: 180
