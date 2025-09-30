@@ -296,4 +296,3 @@ if __name__ == "__main__":
             print(f"OK  {r.url}\n -> {r.path} ({r.bytes_written} bytes, {r.content_type})\n")
         else:
             print(f"ERR {r.url}\n -> {r.error} (status={r.http_status})\n")
-
