@@ -13,10 +13,18 @@ static/
 /.pnp
 .pnp.js
 
+#build output
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
 # testing
 /coverage
 
-
+# production
+/build
+.aws-sam/
 
 # production
 /build
