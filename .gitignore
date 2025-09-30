@@ -45,3 +45,6 @@ yarn-error.log*
 digikey-kicad-library/
 data/output/
 data/search/
+
+# test keys
+env.dev
