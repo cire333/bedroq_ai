@@ -44,7 +44,6 @@ yarn-error.log*
 # misc mixed up data
 digikey-kicad-library/
 data/output/
-data/search/
 
 # test keys
 env.dev
