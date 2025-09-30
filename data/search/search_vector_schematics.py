@@ -15,6 +15,8 @@ Env:
 Indexes (already suggested elsewhere):
   CREATE INDEX ... USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops); -- nets, functional_groups
   CREATE INDEX ... USING hnsw ((embedding::halfvec(1536)) halfvec_cosine_ops); -- components (if 1536)
+
+python search_vector_schematics.py --ask "What is the Voltage 3.3V or 5V?"
 """
 
 import os
@@ -28,17 +30,20 @@ import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 from openai import OpenAI
 from psycopg2.extras import Json
+from dotenv import load_dotenv
 
 # =========================
 # Config / Connections
 # =========================
-CLIENT = get_openai_client()
+load_dotenv("../../env.dev")
 
 def get_openai_client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
     return OpenAI(api_key=api_key)
+
+CLIENT = get_openai_client()
 
 def connect() -> psycopg2.extensions.connection:
     db_url = os.getenv("DATABASE_URL")
