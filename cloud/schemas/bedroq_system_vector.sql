@@ -9,6 +9,19 @@ CREATE TABLE projects (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE TABLE project_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schematic_version_id UUID REFERENCES schematic_versions(id),
+  doc_type TEXT,             -- 'circuit_overview' / 'component' / 'functional_group'
+  content TEXT,
+  metadata JSONB,
+  embedding VECTOR(1536)     -- 1536 is enough for doc text
+);
+
+CREATE INDEX IF NOT EXISTS project_documents_hnsw
+ON project_documents USING hnsw ((embedding::halfvec(1536)) halfvec_cosine_ops);
+
+
 -- Schematic snapshots
 CREATE TABLE schematic_versions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
