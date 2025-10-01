@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Ingest a circuit JSON into Postgres + pgvector (versioned hardware layer).
+Ingest a circuit JSON into Postgres + pgvector (versioned hardware layer + HW facts).
 
-- Creates/uses a Project
-- Creates/uses a Schematic Version (idempotent via content hash)
+What this adds vs. your previous script
+- Creates/uses Project and Schematic Version (idempotent via content hash)
 - Inserts Components (1536-D), Nets (3072-D), Functional Groups (3072-D)
-- Indexes use HNSW over halfvec + cosine ops (good for 3072 dims, avoids 2000-d IVFFlat limit)
+- Derives & stores HW-facts that downstream code/QA relies on:
+  * component_pins (if JSON provides per-pin detail)
+  * pin_connections (best-effort: from nets.connected_components; pin is optional)
+  * component_models (heuristic MCU identification from components)
+- Indexes use HNSW over halfvec + cosine ops (works for 3072 dims, avoids 2000-d IVFFlat limit)
 
 Usage:
   python ingest_vectors.py --json /mnt/data/circuit_analysis.json --project "Starfish"
+
 Env:
   OPENAI_API_KEY, DATABASE_URL (or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE)
 """
@@ -18,24 +23,16 @@ import json
 import uuid
 import argparse
 import hashlib
-import time 
+import time
 import random
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
-from psycopg2.extras import Json, RealDictCursor
+from psycopg2.extras import Json
 from pgvector.psycopg2 import register_vector
-
-import time, random
 from openai import OpenAI, RateLimitError
-
-# OpenAI python SDK >= 1.0
-try:
-    from openai import OpenAI
-except ImportError:
-    # fallback for older package name; but strongly recommend: pip install openai>=1.0.0 psycopg2-binary
-    raise
 
 # -----------------------
 # Embedding configuration
@@ -75,19 +72,20 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 # ======================================================
-# Schema (versioned hardware layer)
+# Schema (versioned hardware layer + facts)
 # ======================================================
 def ensure_schema(conn):
     with conn.cursor() as cur:
         cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
-        # Projects & schematic versions
+        # ---------------- Projects & schematic versions ----------------
         cur.execute("""
         CREATE TABLE IF NOT EXISTS projects (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           name TEXT NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT now()
+          created_at TIMESTAMPTZ DEFAULT now(),
+          UNIQUE(name)
         );
         """)
         cur.execute("""
@@ -102,6 +100,7 @@ def ensure_schema(conn):
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS schematic_versions_project_hash ON schematic_versions(project_id, content_hash);")
 
+        # ---------------- Vectorized entity tables ----------------
         # Components (1536-D)
         cur.execute(f"""
         CREATE TABLE IF NOT EXISTS components (
@@ -150,7 +149,56 @@ def ensure_schema(conn):
         );
         """)
 
-        # ANN indexes: cosine over halfvec
+        # ---------------- NEW: hardware fact tables (for HW↔SW linking) ----------------
+        # Per-component pin catalog (optional; only if JSON provides per-pin detail)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS component_pins (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          schematic_version_id UUID REFERENCES schematic_versions(id),
+          component_ref TEXT,
+          pin_number INT,
+          pin_name TEXT,
+          bank TEXT,
+          extras JSONB
+        );
+        """)
+        # Unique per component/pin identifier if known
+        cur.execute("""
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'component_pins_unique') THEN
+            CREATE UNIQUE INDEX component_pins_unique
+            ON component_pins (schematic_version_id, component_ref, COALESCE(pin_name, pin_number::text));
+          END IF;
+        END$$;
+        """)
+
+        # Connection rows (pin may be unknown; we still keep a row to anchor to the net)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS pin_connections (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          schematic_version_id UUID REFERENCES schematic_versions(id),
+          component_ref TEXT,
+          pin_number INT,
+          pin_name TEXT,
+          net_name TEXT,
+          extras JSONB
+        );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS pin_connections_net ON pin_connections (schematic_version_id, net_name);")
+        cur.execute("CREATE INDEX IF NOT EXISTS pin_connections_comp ON pin_connections (schematic_version_id, component_ref);")
+
+        # Optional MCU model mapping if you can identify the MCU in this schematic version
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS component_models (
+          schematic_version_id UUID REFERENCES schematic_versions(id),
+          component_ref TEXT,
+          mcu_model TEXT,
+          PRIMARY KEY (schematic_version_id, component_ref)
+        );
+        """)
+
+        # ---------------- ANN indexes: cosine over halfvec ----------------
         cur.execute("""
         DO $$
         BEGIN
@@ -179,8 +227,12 @@ def ensure_schema(conn):
         END$$;
         """)
 
-        # Helpful JSON indexes
-        cur.execute("CREATE INDEX IF NOT EXISTS components_metadata_gin ON components USING gin (to_tsvector('simple', coalesce(description,'') || ' ' || coalesce(value,'')));")
+        # Helpful JSON/text indexes
+        cur.execute("""
+        CREATE INDEX IF NOT EXISTS components_metadata_tsv
+        ON components
+        USING gin (to_tsvector('simple', coalesce(description,'') || ' ' || coalesce(value,'')));
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS nets_metadata_gin ON nets USING gin ((metadata));")
         cur.execute("CREATE INDEX IF NOT EXISTS functional_groups_metadata_gin ON functional_groups USING gin ((metadata));")
         cur.execute("ANALYZE;")
@@ -214,7 +266,6 @@ def get_or_create_schematic_version(conn, project_id: uuid.UUID, version_tag: Op
         if row:
             return row[0]
 
-        # Store metadata: take analysis.metadata plus high-level keys besides the heavy arrays (keeps it useful/readable)
         md = analysis_json.get("metadata", {}) or {}
         extra = {k: v for k, v in analysis_json.items() if k not in ("components", "nets", "functional_groups")}
         merged_md = {"metadata": md, "extra": extra}
@@ -278,6 +329,75 @@ def build_functional_group_text(g: Dict[str, Any]) -> str:
     func = g.get("function") or ""
     return (f"Functional group {name}. Function: {func}. Description: {desc}. "
             f"Components: {', '.join(comps) if comps else 'none'}.").strip()
+
+# ======================================================
+# NEW: Derivations from JSON → HW fact rows
+# ======================================================
+MCU_PATTERNS = [
+    r"\bSTM32[A-Z0-9]+\b", r"\bSTM32F\d+\b", r"\bSTM32G\d+\b", r"\bSTM32H\d+\b",
+    r"\bATSAMD\d+\b", r"\bATmega\d+\b", r"\bESP32[-A-Z0-9]*\b", r"\bRP2040\b",
+    r"\bnRF52\d+\b", r"\bnRF53\d+\b"
+]
+MCU_REGEX = re.compile("|".join(MCU_PATTERNS), re.I)
+
+def derive_component_models(components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows = []
+    for c in components or []:
+        ref = c.get("reference")
+        txt = " ".join(filter(None, [c.get("value"), c.get("mpn"), c.get("description"), c.get("library_id")]))
+        if not txt:
+            continue
+        m = MCU_REGEX.search(txt)
+        if m:
+            rows.append({"component_ref": ref, "mcu_model": m.group(0).upper()})
+    return rows
+
+def derive_component_pins(components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Accepts flexible shapes:
+    - c["pins"] may be a list of dicts like {"number":1,"name":"PA9","bank":"A"} OR strings
+    If no usable pin data, returns [] (non-fatal).
+    """
+    out: List[Dict[str, Any]] = []
+    for c in components or []:
+        ref = c.get("reference")
+        pins = c.get("pins") or []
+        for p in pins:
+            if isinstance(p, dict):
+                pin_number = p.get("number")
+                pin_name = p.get("name")
+                bank = p.get("bank")
+                extras = {k: v for k, v in p.items() if k not in ("number", "name", "bank")}
+                if pin_number is None and not pin_name:
+                    continue
+                out.append({
+                    "component_ref": ref,
+                    "pin_number": pin_number,
+                    "pin_name": pin_name,
+                    "bank": bank,
+                    "extras": extras or None
+                })
+            # strings or empty entries are ignored
+    return out
+
+def derive_pin_connections(nets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Best-effort: from each net, attach all connected_components.
+    Pin may be unknown (pin_name/pin_number left NULL). This still gives:
+      (schematic_version_id, component_ref, net_name) for downstream joins.
+    """
+    out: List[Dict[str, Any]] = []
+    for n in nets or []:
+        net_name = n.get("name")
+        for comp_ref in (n.get("connected_components") or []):
+            out.append({
+                "component_ref": comp_ref,
+                "pin_number": None,
+                "pin_name": None,
+                "net_name": net_name,
+                "extras": {"net_type": n.get("net_type")}
+            })
+    return out
 
 # ======================================================
 # Upserts (versioned)
@@ -347,11 +467,52 @@ def upsert_functional_groups(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]])
               embedding = EXCLUDED.embedding;
         """, rows)
 
+def upsert_component_pins(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
+    if not rows:
+        return
+    for r in rows:
+        r["id"] = uuid.uuid4()
+        r["schematic_version_id"] = sv_id
+        r["extras"] = Json(r.get("extras") or {})
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, """
+            INSERT INTO component_pins (id, schematic_version_id, component_ref, pin_number, pin_name, bank, extras)
+            VALUES (%(id)s, %(schematic_version_id)s, %(component_ref)s, %(pin_number)s, %(pin_name)s, %(bank)s, %(extras)s)
+            ON CONFLICT ON CONSTRAINT component_pins_unique DO NOTHING;
+        """, rows)
+
+def upsert_pin_connections(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
+    if not rows:
+        return
+    for r in rows:
+        r["id"] = uuid.uuid4()
+        r["schematic_version_id"] = sv_id
+        r["extras"] = Json(r.get("extras") or {})
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, """
+            INSERT INTO pin_connections (id, schematic_version_id, component_ref, pin_number, pin_name, net_name, extras)
+            VALUES (%(id)s, %(schematic_version_id)s, %(component_ref)s, %(pin_number)s, %(pin_name)s, %(net_name)s, %(extras)s)
+            ON CONFLICT DO NOTHING;
+        """, rows)
+
+def upsert_component_models(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
+    if not rows:
+        return
+    for r in rows:
+        r["schematic_version_id"] = sv_id
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, """
+            INSERT INTO component_models (schematic_version_id, component_ref, mcu_model)
+            VALUES (%(schematic_version_id)s, %(component_ref)s, %(mcu_model)s)
+            ON CONFLICT (schematic_version_id, component_ref) DO UPDATE
+            SET mcu_model = EXCLUDED.mcu_model;
+        """, rows)
+
 # ======================================================
 # Main
 # ======================================================
 def main():
-    parser = argparse.ArgumentParser(description="Ingest circuit JSON into versioned pgvector")
+    parser = argparse.ArgumentParser(description="Ingest circuit JSON into versioned pgvector + HW facts")
     parser.add_argument("--json", default="/mnt/data/circuit_analysis.json", help="Path to JSON file")
     parser.add_argument("--project", default=None, help="Project name (default: analysis.metadata.title or 'Default Project')")
     parser.add_argument("--version-tag", default=None, help="Version tag (default: analysis.metadata.revision if present)")
@@ -455,6 +616,24 @@ def main():
                     "embedding": emb,
                 })
         upsert_functional_groups(conn, sv_id, rows)
+
+    # -------------------------
+    # NEW: derive & store HW facts from JSON
+    # -------------------------
+    try:
+        # component_pins (only if JSON has per-pin info)
+        cp_rows = derive_component_pins(components)
+        upsert_component_pins(conn, sv_id, cp_rows)
+
+        # pin_connections (best-effort from nets.connected_components)
+        pc_rows = derive_pin_connections(nets)
+        upsert_pin_connections(conn, sv_id, pc_rows)
+
+        # component_models (heuristic MCU detection)
+        cm_rows = derive_component_models(components)
+        upsert_component_models(conn, sv_id, cm_rows)
+    except Exception as e:
+        print(f"[warn] HW facts derivation skipped/partial: {e}")
 
     print(f"✅ Ingestion complete. project='{project_name}' version_tag='{version_tag}' sv_id={sv_id}")
 
