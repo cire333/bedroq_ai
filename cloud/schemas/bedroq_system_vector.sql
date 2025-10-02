@@ -9,6 +9,28 @@ CREATE TABLE projects (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE TABLE artifact_sources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID REFERENCES projects(id),
+  kind TEXT CHECK (kind IN ('schematic','code', 'fpga')),
+  uri TEXT,           -- e.g., S3 path for JSON, git remote for code
+  metadata JSONB,
+  UNIQUE(project_id, kind, uri)
+);
+
+
+-- Schematic snapshots
+CREATE TABLE schematic_versions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID REFERENCES projects(id),
+  source_id UUID REFERENCES artifact_sources(id),
+  version_tag TEXT,                       -- optional, e.g., "v2" or file name
+  content_hash TEXT NOT NULL,             -- hash of normalized JSON
+  created_at TIMESTAMPTZ DEFAULT now(),
+  metadata JSONB                     -- store analysis.metadata + annotations array here
+);
+
+
 CREATE TABLE project_documents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   schematic_version_id UUID REFERENCES schematic_versions(id),
@@ -21,17 +43,6 @@ CREATE TABLE project_documents (
 CREATE INDEX IF NOT EXISTS project_documents_hnsw
 ON project_documents USING hnsw ((embedding::halfvec(1536)) halfvec_cosine_ops);
 
-
--- Schematic snapshots
-CREATE TABLE schematic_versions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id UUID REFERENCES projects(id),
-  source_id UUID REFERENCES artifact_sources(id),
-  version_tag TEXT,                       -- optional, e.g., "v2" or file name
-  content_hash TEXT NOT NULL,             -- hash of normalized JSON
-  created_at TIMESTAMPTZ DEFAULT now(),
-  metadata JSONB.                     -- store analysis.metadata + annotations array here
-);
 
 
 CREATE TABLE components (
@@ -66,7 +77,6 @@ CREATE TABLE functional_groups (
   schematic_version_id UUID REFERENCES schematic_versions(id),
   name TEXT, 
   description TEXT,
-  components TEXT[],                      -- refs
   function TEXT,
   components TEXT[],
   metadata JSONB,
@@ -75,23 +85,35 @@ CREATE TABLE functional_groups (
 
 -- One row per physical/nominal pin on a component (MCU, ASIC, etc.)
 CREATE TABLE IF NOT EXISTS component_pins (
-  schematic_version_id UUID REFERENCES schematic_versions(id),
-  component_ref TEXT,          -- e.g. 'U401'
-  pin_number INT,              -- numeric index
-  pin_name TEXT,               -- e.g. 'PA5' or 'D5'
-  bank TEXT,                   -- optional (ports/banks)
-  PRIMARY KEY (schematic_version_id, component_ref, COALESCE(pin_name, pin_number::text))
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schematic_version_id UUID NOT NULL REFERENCES schematic_versions(id),
+  component_ref TEXT NOT NULL,     -- e.g. 'U401'
+  pin_number INT,                  -- numeric index (nullable)
+  pin_name TEXT,                   -- e.g. 'PA5' or 'D5' (nullable)
+  bank TEXT,                       -- optional (ports/banks)
+  -- one must be provided
+  CONSTRAINT component_pins_has_key CHECK (pin_name IS NOT NULL OR pin_number IS NOT NULL),
+  -- computed key: prefer name, else number
+  pin_key TEXT GENERATED ALWAYS AS (COALESCE(pin_name, pin_number::text)) STORED,
+  -- enforce uniqueness for this SV+component+pin
+  CONSTRAINT component_pins_unique UNIQUE (schematic_version_id, component_ref, pin_key)
 );
+
 
 -- Actual connection in the schematic snapshot (what net that pin is tied to)
 CREATE TABLE IF NOT EXISTS pin_connections (
-  schematic_version_id UUID REFERENCES schematic_versions(id),
-  component_ref TEXT,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schematic_version_id UUID NOT NULL REFERENCES schematic_versions(id),
+  net_name TEXT NOT NULL,          -- (denormalized; you can also store net_id if you prefer)
+  component_ref TEXT NOT NULL,
   pin_number INT,
   pin_name TEXT,
-  net_name TEXT,
-  PRIMARY KEY (schematic_version_id, component_ref, COALESCE(pin_name, pin_number::text))
+  role TEXT,
+  CONSTRAINT pin_connections_has_key CHECK (pin_name IS NOT NULL OR pin_number IS NOT NULL),
+  pin_key TEXT GENERATED ALWAYS AS (COALESCE(pin_name, pin_number::text)) STORED,
+  CONSTRAINT pin_connections_unique UNIQUE (schematic_version_id, net_name, component_ref, pin_key)
 );
+
 
 -- Static MCU catalog (from datasheet or CMSIS/SoC DB): which *alternate functions* a pin can take
 CREATE TABLE IF NOT EXISTS mcu_pin_function_catalog (
@@ -123,14 +145,6 @@ ON functional_groups USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);
 CREATE INDEX IF NOT EXISTS components_hnsw_halfvec_cos
 ON components USING hnsw ((embedding::halfvec(1536)) halfvec_cosine_ops);
 
-CREATE TABLE artifact_sources (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id UUID REFERENCES projects(id),
-  kind TEXT CHECK (kind IN ('schematic','code')),
-  uri TEXT,           -- e.g., S3 path for JSON, git remote for code
-  metadata JSONB,
-  UNIQUE(project_id, kind, uri)
-);
 
 -- Versioning / Snapshots
 -- Code snapshots (git commits)
@@ -151,6 +165,42 @@ CREATE TABLE code_commits (
   author TEXT, message TEXT,
   UNIQUE(repo_id, commit_sha)
 );
+
+
+CREATE TABLE code_files (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  commit_id UUID REFERENCES code_commits(id),
+  path TEXT, lang TEXT, size_bytes BIGINT,
+  content_hash TEXT,                      -- normalized content hash
+  text TEXT,                              -- optional: keep short files; larger => chunk below
+  UNIQUE(commit_id, path)
+);
+
+-- Per-file chunks (for big files) with embeddings for semantic search
+CREATE TABLE code_chunks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  file_id UUID REFERENCES code_files(id),
+  chunk_index INT,
+  text TEXT,
+  embedding VECTOR(1536),                 -- 1536-D recommended for code
+  UNIQUE(file_id, chunk_index)
+);
+
+/* ANN index for code chunks */
+CREATE INDEX IF NOT EXISTS code_chunks_hnsw_halfvec_cos
+ON code_chunks USING hnsw ((embedding::halfvec(1536)) halfvec_cosine_ops);
+
+-- Optional: symbol table for structured queries
+CREATE TABLE code_symbols (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  file_id UUID REFERENCES code_files(id),
+  kind TEXT,                              -- function, macro, var, dts-node, kconfig, etc.
+  name TEXT, signature TEXT,
+  line_start INT, line_end INT,
+  extras JSONB                            -- e.g., gpio/pin, i2c_addr, bus, cs pin, adc channel
+);
+
+CREATE INDEX IF NOT EXISTS code_symbols_name_gin ON code_symbols USING gin (to_tsvector('simple', name));
 
 -- Structured SW facts extracted from code (HAL calls, devicetree overlays, Arduino/board defines)
 CREATE TABLE IF NOT EXISTS code_pin_mux_facts (
@@ -187,7 +237,7 @@ CREATE TABLE IF NOT EXISTS pin_facts (
   embedding VECTOR(1536)
 );
 
--- Optional: peripheral-level summaries (UART1/SPI1/I2C1 etc.)
+-- Experimental: peripheral-level summaries (UART1/SPI1/I2C1 etc.)
 CREATE TABLE IF NOT EXISTS peripheral_facts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   schematic_version_id UUID REFERENCES schematic_versions(id),
@@ -196,3 +246,31 @@ CREATE TABLE IF NOT EXISTS peripheral_facts (
   summary TEXT,                 -- e.g. 'USART1: TX=PA6 (Net_42), RX=PA10 (Net_7)...'
   embedding VECTOR(1536)
 );
+
+-- Experimental A probabilistic/heuristic link with evidence derived from both schematic + code analysis
+CREATE TABLE hardware_links (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID REFERENCES projects(id),
+  schematic_version_id UUID REFERENCES schematic_versions(id),
+  code_commit_id UUID REFERENCES code_commits(id),
+  link_type TEXT,     -- 'pin', 'bus', 'driver', 'address', 'device_tree', 'define', 'gpio_map'
+  component_ref TEXT, -- e.g., 'U403' or NULL if net-only
+  net_name TEXT,      -- e.g., 'Net_3' if relevant
+  code_symbol_id UUID REFERENCES code_symbols(id),  -- or NULL
+  file_id UUID REFERENCES code_files(id),           -- convenience edge
+  evidence JSONB,     -- {pattern:"HAL_I2C_Init", lines:[...], addr:0x3C, pin:"PB6", ...}
+  confidence REAL CHECK (confidence >= 0 AND confidence <= 1),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Experimental Optional release snapshots to “pin” a schematic+commit pair
+CREATE TABLE project_releases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID REFERENCES projects(id),
+  name TEXT, notes TEXT,
+  schematic_version_id UUID REFERENCES schematic_versions(id),
+  code_commit_id UUID REFERENCES code_commits(id),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, name)
+);
+

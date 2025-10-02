@@ -12,6 +12,11 @@ from collections import defaultdict
 import math
 import time
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load variables from env.dev file
+load_dotenv("env.dev")
+
 
 # Parser version
 PARSER_VERSION = "1.0.0"

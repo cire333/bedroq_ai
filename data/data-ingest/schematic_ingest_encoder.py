@@ -34,6 +34,11 @@ from psycopg2.extras import Json
 from pgvector.psycopg2 import register_vector
 from openai import OpenAI, RateLimitError
 
+from dotenv import load_dotenv
+
+# Load variables from env.dev file
+load_dotenv("env.dev")
+
 # -----------------------
 # Embedding configuration
 # -----------------------
