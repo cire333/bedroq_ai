@@ -126,22 +126,32 @@ def ensure_code_schema(conn):
         # ---- NEW: minimal HW tables used by facts (safe even if HW ingest owns them) ----
         cur.execute("""
         CREATE TABLE IF NOT EXISTS component_pins (
-          schematic_version_id UUID REFERENCES schematic_versions(id),
-          component_ref TEXT,
-          pin_number INT,
-          pin_name TEXT,
-          bank TEXT,
-          PRIMARY KEY (schematic_version_id, component_ref, COALESCE(pin_name, pin_number::text))
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            schematic_version_id UUID NOT NULL REFERENCES schematic_versions(id),
+            component_ref TEXT NOT NULL,     -- e.g. 'U401'
+            pin_number INT,                  -- numeric index (nullable)
+            pin_name TEXT,                   -- e.g. 'PA5' or 'D5' (nullable)
+            bank TEXT,                       -- optional (ports/banks)
+            -- one must be provided
+            CONSTRAINT component_pins_has_key CHECK (pin_name IS NOT NULL OR pin_number IS NOT NULL),
+            -- computed key: prefer name, else number
+            pin_key TEXT GENERATED ALWAYS AS (COALESCE(pin_name, pin_number::text)) STORED,
+            -- enforce uniqueness for this SV+component+pin
+            CONSTRAINT component_pins_unique UNIQUE (schematic_version_id, component_ref, pin_key)
         );""")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS pin_connections (
-          schematic_version_id UUID REFERENCES schematic_versions(id),
-          component_ref TEXT,
-          pin_number INT,
-          pin_name TEXT,
-          net_name TEXT,
-          PRIMARY KEY (schematic_version_id, component_ref, COALESCE(pin_name, pin_number::text))
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            schematic_version_id UUID NOT NULL REFERENCES schematic_versions(id),
+            net_name TEXT NOT NULL,          -- (denormalized; you can also store net_id if you prefer)
+            component_ref TEXT NOT NULL,
+            pin_number INT,
+            pin_name TEXT,
+            role TEXT,
+            CONSTRAINT pin_connections_has_key CHECK (pin_name IS NOT NULL OR pin_number IS NOT NULL),
+            pin_key TEXT GENERATED ALWAYS AS (COALESCE(pin_name, pin_number::text)) STORED,
+            CONSTRAINT pin_connections_unique UNIQUE (schematic_version_id, net_name, component_ref, pin_key)
         );""")
         cur.execute("CREATE INDEX IF NOT EXISTS pin_conn_sv_net ON pin_connections(schematic_version_id, net_name);")
 

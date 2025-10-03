@@ -8,10 +8,10 @@ End-to-end test for the HW+SW stack:
 
 Usage:
   export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
-  python e2e_test_stack.py
+  python embedding_test.py
 """
 
-import os, io, json, uuid, copy, hashlib, random, time
+import os, io, json, uuid, copy, hashlib, random, time, sys
 import psycopg2, psycopg2.extras
 from psycopg2.extras import RealDictCursor, Json
 
@@ -23,19 +23,16 @@ import importlib
 from dotenv import load_dotenv
 
 # Load variables from env.dev file
-load_dotenv("env.dev")
+load_dotenv("../../../env.dev")
+
+sys.path.append(os.path.abspath(".."))
 
 # Try default filenames; change if yours differ
-SCHEMA_MOD_NAME = os.getenv("SCHEMA_MOD", "ingest_vectors")     # e.g. ingest_vectors.py (the “versioned hardware layer + facts” one)
-CODE_MOD_NAME   = os.getenv("CODE_MOD",   "ingest_code_snap")   # e.g. the code ingest file you created earlier
+SCHEMA_MOD_NAME = os.getenv("SCHEMA_MOD", "schematic_ingest_encoder")     # e.g. ingest_vectors.py (the “versioned hardware layer + facts” one)
+CODE_MOD_NAME   = os.getenv("CODE_MOD",   "source_code_encoder")   # e.g. the code ingest file you created earlier
 
 schema_mod = importlib.import_module(SCHEMA_MOD_NAME)
 code_mod   = importlib.import_module(CODE_MOD_NAME)
-
-# --------------------------
-# Fake embeddings (default)
-# --------------------------
-USE_FAKE_EMBEDDINGS = os.getenv("USE_FAKE_EMBEDDINGS", "1") != "0"
 
 def _det_hash(s: str) -> bytes:
     return hashlib.sha256(s.encode("utf-8", errors="ignore")).digest()
@@ -54,20 +51,11 @@ def fake_embed_batch(client, texts: list[str], model="text-embedding-3-small", *
     dims = 1536
     return [_hash_to_vec(t, dims) for t in texts]
 
-if USE_FAKE_EMBEDDINGS:
-    # monkeypatch embedding functions in your modules
-    # schematic side
-    if hasattr(schema_mod, "embed_texts"):
-        schema_mod.embed_texts = fake_embed_texts
-    # code side
-    if hasattr(code_mod, "embed_batch"):
-        code_mod.embed_batch = fake_embed_batch
-
 # --------------------------
 # Helpers
 # --------------------------
 def pg_connect():
-    url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
+    url = os.getenv("DATABASE_URL", "postgresql://ericvalasek:ericeric@localhost:5432/bedroq_vector_data")
     conn = psycopg2.connect(url)
     conn.autocommit = True
     psycopg2.extras.register_uuid(conn_or_curs=conn)
@@ -88,7 +76,7 @@ def run_sql(conn, sql, args=None):
 # --------------------------
 def load_example_json():
     # Use the example you uploaded earlier
-    with open("/mnt/data/circuit_analysis.json", "r", encoding="utf-8") as f:
+    with open("../schematics/circuit.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
 def make_v1_v2(base_json: dict) -> tuple[dict,dict]:
@@ -193,12 +181,8 @@ def search_nets_by_text(conn, sv_id: uuid.UUID, query_vec: list[float]):
         return cur.fetchall()
 
 def embed_q(text: str) -> list[float]:
-    # Make a short, local embed call using our fake function (or real one if not patched)
-    if USE_FAKE_EMBEDDINGS:
-        return fake_embed_texts([text], model="text-embedding-3-large")[0]
-    else:
-        # real call via schema_mod (uses OpenAI)
-        return schema_mod.embed_texts(schema_mod.get_openai_client(), [text], "text-embedding-3-large")[0]
+    # real call via schema_mod (uses OpenAI)
+    return schema_mod.embed_texts(schema_mod.get_openai_client(), [text], "text-embedding-3-large")[0]
 
 # --------------------------
 # Diff & mismatch queries

@@ -26,6 +26,7 @@ import hashlib
 import time
 import random
 import re
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
@@ -36,8 +37,13 @@ from openai import OpenAI, RateLimitError
 
 from dotenv import load_dotenv
 
+sys.path.append(os.path.abspath(".."))
+
 # Load variables from env.dev file
-load_dotenv("env.dev")
+load_dotenv("../env.dev")
+
+print (f"[info] Using OpenAI key: {'set' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
+print (f"[info] Using DATABASE_URL: {os.getenv('DATABASE_URL', 'NOT SET')}")
 
 # -----------------------
 # Embedding configuration
