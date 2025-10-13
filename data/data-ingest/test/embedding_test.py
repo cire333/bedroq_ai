@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end test for the HW+SW stack:
+End-to-end test for the HW+SW stack and search V0.1:
 - Creates a project
 - Ingests schematic v1 & v2 (with a deliberate pin change)
 - Ingests a code snapshot bound to v2 that still uses pin 5
@@ -14,6 +14,7 @@ Usage:
 import os, io, json, uuid, copy, hashlib, random, time, sys
 import psycopg2, psycopg2.extras
 from psycopg2.extras import RealDictCursor, Json
+from openai import OpenAI, RateLimitError
 
 # --- Adjust these imports to your actual module/file names ---
 # schematic ingest module (the big one you updated last)
@@ -24,6 +25,10 @@ from dotenv import load_dotenv
 
 # Load variables from env.dev file
 load_dotenv("../../../env.dev")
+
+
+print (f"[info] Using OpenAI key: {'set' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
+print (f"[info] Using DATABASE_URL: {os.getenv('DATABASE_URL', 'NOT SET')}")
 
 sys.path.append(os.path.abspath(".."))
 
@@ -216,7 +221,7 @@ SELECT
   sv2.id AS schematic_version_id,
   cc.id AS commit_id,
   cf.path,
-  cc.branch_name,
+    COALESCE(b.branch_name, cr.default_branch) AS branch_name,
   cc.commit_sha,
   SUBSTRING(cf.text FROM 'UART_TX_PIN\\s*([0-9]+)')::int AS code_pin,
   p.pin_number AS hw_pin,
@@ -226,6 +231,7 @@ FROM schematic_code_bindings b
 JOIN schematic_versions sv2 ON sv2.id = b.schematic_version_id
 JOIN code_commits cc ON cc.id = b.commit_id
 JOIN code_files cf ON cf.commit_id = cc.id
+JOIN code_repos cr ON cc.repo_id = cr.id
 LEFT JOIN component_pins p
   ON p.schematic_version_id = sv2.id
  AND p.component_ref = 'U100'
@@ -234,11 +240,18 @@ WHERE b.schematic_version_id = %(sv2)s
   AND cf.text ~ 'UART_TX_PIN\\s*[0-9]+';
 """
 
+def get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+    return OpenAI(api_key=api_key)
+
 # --------------------------
 # MAIN
 # --------------------------
 def main():
     conn = pg_connect()
+    client = get_openai_client()
 
     # Ensure schemas exist
     schema_mod.ensure_schema(conn)
@@ -276,7 +289,7 @@ def main():
     # Embed & upsert v1
     if comps1:
         ctexts = [schema_mod.build_component_text(c) for c in comps1]
-        cembs  = schema_mod.embed_texts(None, ctexts, "text-embedding-3-small")
+        cembs  = schema_mod.embed_texts(client, ctexts, "text-embedding-3-small")
         rows = []
         for c, e in zip(comps1, cembs):
             rows.append({
@@ -293,7 +306,7 @@ def main():
 
     if nets1:
         ntexts = [schema_mod.build_net_text(n) for n in nets1]
-        nembs  = schema_mod.embed_texts(None, ntexts, "text-embedding-3-large")
+        nembs  = schema_mod.embed_texts(client, ntexts, "text-embedding-3-large")
         rows = []
         for n, e in zip(nets1, nembs):
             rows.append({
@@ -308,7 +321,7 @@ def main():
 
     if fgs1:
         gtexts = [schema_mod.build_functional_group_text(g) for g in fgs1]
-        gembs  = schema_mod.embed_texts(None, gtexts, "text-embedding-3-large")
+        gembs  = schema_mod.embed_texts(client, gtexts, "text-embedding-3-large")
         rows = []
         for g, e in zip(fgs1, gembs):
             rows.append({
@@ -328,7 +341,7 @@ def main():
     # Embed & upsert v2 (same as above but against sv2)
     if comps2:
         ctexts = [schema_mod.build_component_text(c) for c in comps2]
-        cembs  = schema_mod.embed_texts(None, ctexts, "text-embedding-3-small")
+        cembs  = schema_mod.embed_texts(client, ctexts, "text-embedding-3-small")
         rows = []
         for c, e in zip(comps2, cembs):
             rows.append({
@@ -345,7 +358,7 @@ def main():
 
     if nets2:
         ntexts = [schema_mod.build_net_text(n) for n in nets2]
-        nembs  = schema_mod.embed_texts(None, ntexts, "text-embedding-3-large")
+        nembs  = schema_mod.embed_texts(client, ntexts, "text-embedding-3-large")
         rows = []
         for n, e in zip(nets2, nembs):
             rows.append({
@@ -360,7 +373,7 @@ def main():
 
     if fgs2:
         gtexts = [schema_mod.build_functional_group_text(g) for g in fgs2]
-        gembs  = schema_mod.embed_texts(None, gtexts, "text-embedding-3-large")
+        gembs  = schema_mod.embed_texts(client, gtexts, "text-embedding-3-large")
         rows = []
         for g, e in zip(fgs2, gembs):
             rows.append({

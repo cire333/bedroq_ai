@@ -69,7 +69,8 @@ CREATE TABLE nets (
   connected_components TEXT[],            -- refs like ['U403','J407',...]
   connection_points JSONB,
   metadata JSONB,
-  embedding VECTOR(3072)                  -- 3072-D for richer net semantics
+  embedding VECTOR(3072),                 -- 3072-D for richer net semantics
+  UNIQUE (schematic_version_id, name)
 );
 
 CREATE TABLE functional_groups (
@@ -274,3 +275,5 @@ CREATE TABLE project_releases (
   UNIQUE(project_id, name)
 );
 
+CREATE UNIQUE INDEX CONCURRENTLY fgroups_unique ON functional_groups (schematic_version_id, name);
+CREATE UNIQUE INDEX CONCURRENTLY nets_unique ON nets (schematic_version_id, name);

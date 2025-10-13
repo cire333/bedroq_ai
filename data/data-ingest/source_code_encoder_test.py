@@ -9,6 +9,12 @@ from pgvector.psycopg2 import register_vector
 # OpenAI >= 1.0
 from openai import OpenAI, RateLimitError
 
+from dotenv import load_dotenv
+
+# Load variables from env.dev file
+load_dotenv("env.dev")
+
+
 # -----------------------------
 # Embedding model (code side)
 # -----------------------------

@@ -455,15 +455,24 @@ def ingest_code_snapshot(
     client = get_openai_client()
 
     with conn.cursor() as cur:
-        # 1) repo
+        # 1) artifact source (store the repo URI) and repo
+        # The repo URI is stored in artifact_sources; code_repos references source_id
+        cur.execute("SELECT id FROM artifact_sources WHERE project_id = %s AND kind = 'code' AND uri = %s LIMIT 1;", (project_id, repo_uri))
+        row = cur.fetchone()
+        if row:
+            source_id = row[0]
+        else:
+            cur.execute("INSERT INTO artifact_sources (project_id, kind, uri, metadata) VALUES (%s, %s, %s, %s) RETURNING id;", (project_id, 'code', repo_uri, Json({})))
+            source_id = cur.fetchone()[0]
+
         cur.execute("""
-            INSERT INTO code_repos (project_id, provider, uri, default_branch)
+            INSERT INTO code_repos (project_id, source_id, provider, default_branch)
             VALUES (%s, %s, %s, %s)
-            ON CONFLICT (project_id, uri) DO UPDATE
+            ON CONFLICT (project_id, source_id) DO UPDATE
             SET provider = EXCLUDED.provider,
                 default_branch = COALESCE(code_repos.default_branch, EXCLUDED.default_branch)
             RETURNING id;""",
-            (project_id, provider, repo_uri, branch_name))
+            (project_id, source_id, provider, branch_name))
         repo_id = cur.fetchone()[0]
 
         # 2) commit
@@ -474,15 +483,14 @@ def ingest_code_snapshot(
             commit_sha = h.hexdigest()[:40]
 
         cur.execute("""
-            INSERT INTO code_commits (repo_id, commit_sha, branch_name, committed_at, author, message)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO code_commits (repo_id, commit_sha, committed_at, author, message)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (repo_id, commit_sha) DO UPDATE
-            SET branch_name = EXCLUDED.branch_name,
-                committed_at = COALESCE(code_commits.committed_at, EXCLUDED.committed_at),
+            SET committed_at = COALESCE(code_commits.committed_at, EXCLUDED.committed_at),
                 author = COALESCE(code_commits.author, EXCLUDED.author),
                 message = COALESCE(code_commits.message, EXCLUDED.message)
             RETURNING id;""",
-            (repo_id, commit_sha, branch_name, committed_at, author, message))
+            (repo_id, commit_sha, committed_at, author, message))
         commit_id = cur.fetchone()[0]
 
         # 3) files + chunks + NEW: code facts

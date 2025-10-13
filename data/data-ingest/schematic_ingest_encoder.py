@@ -12,7 +12,7 @@ What this adds vs. your previous script
 - Indexes use HNSW over halfvec + cosine ops (works for 3072 dims, avoids 2000-d IVFFlat limit)
 
 Usage:
-  python ingest_vectors.py --json /mnt/data/circuit_analysis.json --project "Starfish"
+  python schematic_ingest_encoder.py --json circuit_analysis.json --project "Starfish"
 
 Env:
   OPENAI_API_KEY, DATABASE_URL (or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE)
@@ -40,10 +40,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.abspath(".."))
 
 # Load variables from env.dev file
-load_dotenv("../env.dev")
-
-print (f"[info] Using OpenAI key: {'set' if os.getenv('OPENAI_API_KEY') else 'NOT SET'}")
-print (f"[info] Using DATABASE_URL: {os.getenv('DATABASE_URL', 'NOT SET')}")
+load_dotenv("../../env.dev")
 
 # -----------------------
 # Embedding configuration
@@ -115,35 +112,48 @@ def ensure_schema(conn):
         # Components (1536-D)
         cur.execute(f"""
         CREATE TABLE IF NOT EXISTS components (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          schematic_version_id UUID REFERENCES schematic_versions(id),
-          reference TEXT,
-          value TEXT,
-          description TEXT,
-          mpn TEXT,
-          datasheet TEXT,
-          footprint TEXT,
-          library_id TEXT,
-          rating TEXT,
-          rotation DOUBLE PRECISION,
-          position JSONB,
-          embedding VECTOR({DIMS_SMALL}),
-          UNIQUE (schematic_version_id, reference)
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            schematic_version_id UUID REFERENCES schematic_versions(id),
+            reference TEXT,
+            value TEXT,
+            description TEXT,
+            mpn TEXT,
+            datasheet TEXT,
+            footprint TEXT,
+            library_id TEXT,
+            rating TEXT,
+            position JSONB,
+            embedding VECTOR({DIMS_SMALL}),
+            UNIQUE (schematic_version_id, reference)
         );
         """)
+
         # Nets (3072-D)
         cur.execute(f"""
         CREATE TABLE IF NOT EXISTS nets (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          schematic_version_id UUID REFERENCES schematic_versions(id),
-          name TEXT,
-          net_type TEXT,
-          connected_components TEXT[],
-          connection_points JSONB,
-          metadata JSONB,
-          embedding VECTOR({DIMS_LARGE}),
-          UNIQUE (schematic_version_id, name)
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            schematic_version_id UUID REFERENCES schematic_versions(id),
+            name TEXT,
+            net_type TEXT,
+            connected_components TEXT[],
+            connection_points JSONB,
+            metadata JSONB,
+            embedding VECTOR({DIMS_LARGE}),
+            UNIQUE (schematic_version_id, name)
         );
+        """)
+
+        # Ensure a unique index exists for ON CONFLICT targets in upserts. Some DBs may have
+        # been created from an older schema that didn't include the UNIQUE constraint; this
+        # idempotent DO block will add the unique index if it's missing so ON CONFLICT (schematic_version_id, name)
+        # works as expected.
+        cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'nets_unique') THEN
+                CREATE UNIQUE INDEX nets_unique ON nets (schematic_version_id, name);
+            END IF;
+        END$$;
         """)
         # Functional groups (3072-D)
         cur.execute(f"""
@@ -158,6 +168,15 @@ def ensure_schema(conn):
           embedding VECTOR({DIMS_LARGE}),
           UNIQUE (schematic_version_id, name)
         );
+        """)
+        # Ensure unique index exists for functional_groups ON CONFLICT targets
+        cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'fgroups_unique') THEN
+                CREATE UNIQUE INDEX fgroups_unique ON functional_groups (schematic_version_id, name);
+            END IF;
+        END$$;
         """)
 
         # ---------------- NEW: hardware fact tables (for HW↔SW linking) ----------------
@@ -187,13 +206,16 @@ def ensure_schema(conn):
         # Connection rows (pin may be unknown; we still keep a row to anchor to the net)
         cur.execute("""
         CREATE TABLE IF NOT EXISTS pin_connections (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          schematic_version_id UUID REFERENCES schematic_versions(id),
-          component_ref TEXT,
-          pin_number INT,
-          pin_name TEXT,
-          net_name TEXT,
-          extras JSONB
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            schematic_version_id UUID NOT NULL REFERENCES schematic_versions(id),
+            net_name TEXT NOT NULL,          -- (denormalized; you can also store net_id if you prefer)
+            component_ref TEXT NOT NULL,
+            pin_number INT,
+            pin_name TEXT,
+            role TEXT,
+            CONSTRAINT pin_connections_has_key CHECK (pin_name IS NOT NULL OR pin_number IS NOT NULL),
+            pin_key TEXT GENERATED ALWAYS AS (COALESCE(pin_name, pin_number::text)) STORED,
+            CONSTRAINT pin_connections_unique UNIQUE (schematic_version_id, net_name, component_ref, pin_key)
         );
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS pin_connections_net ON pin_connections (schematic_version_id, net_name);")
@@ -294,6 +316,7 @@ def embed_texts(client: OpenAI, texts: List[str], model: str, max_retries: int =
     if not texts:
         return []
     delay = 0.6
+
     for attempt in range(max_retries):
         try:
             resp = client.embeddings.create(model=model, input=texts)
@@ -401,11 +424,16 @@ def derive_pin_connections(nets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for n in nets or []:
         net_name = n.get("name")
         for comp_ref in (n.get("connected_components") or []):
+            # Ensure we satisfy the table CHECK (pin_name IS NOT NULL OR pin_number IS NOT NULL).
+            # When JSON doesn't include pin-level detail, set a sentinel pin_name so the
+            # row is valid but still indicates the pin is unknown.
             out.append({
                 "component_ref": comp_ref,
                 "pin_number": None,
-                "pin_name": None,
+                "pin_name": "__UNKNOWN__",
                 "net_name": net_name,
+                # allow callers to include a role string; also include net_type for context
+                "role": n.get("role"),
                 "extras": {"net_type": n.get("net_type")}
             })
     return out
@@ -420,11 +448,11 @@ def upsert_components(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
         psycopg2.extras.execute_batch(cur, """
             INSERT INTO components (
               id, schematic_version_id, reference, value, description, mpn, datasheet,
-              footprint, library_id, rating, rotation, position, embedding
+              footprint, library_id, rating, position, embedding
             )
             VALUES (
               %(id)s, %(schematic_version_id)s, %(reference)s, %(value)s, %(description)s, %(mpn)s, %(datasheet)s,
-              %(footprint)s, %(library_id)s, %(rating)s, %(rotation)s, %(position)s, %(embedding)s
+              %(footprint)s, %(library_id)s, %(rating)s, %(position)s, %(embedding)s
             )
             ON CONFLICT (schematic_version_id, reference) DO UPDATE SET
               value = EXCLUDED.value,
@@ -434,7 +462,6 @@ def upsert_components(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
               footprint = EXCLUDED.footprint,
               library_id = EXCLUDED.library_id,
               rating = EXCLUDED.rating,
-              rotation = EXCLUDED.rotation,
               position = EXCLUDED.position,
               embedding = EXCLUDED.embedding;
         """, rows)
@@ -498,11 +525,19 @@ def upsert_pin_connections(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
     for r in rows:
         r["id"] = uuid.uuid4()
         r["schematic_version_id"] = sv_id
-        r["extras"] = Json(r.get("extras") or {})
+        # Normalize role to a TEXT value (table defines role TEXT). If caller provided a
+        # dict or list, stringify it as JSON; otherwise coerce to string or set NULL.
+        role_val = r.get("role") or r.get("roles")
+        if role_val is None:
+            r["role"] = None
+        elif isinstance(role_val, (dict, list)):
+            r["role"] = json.dumps(role_val, ensure_ascii=False)
+        else:
+            r["role"] = str(role_val)
     with conn.cursor() as cur:
         psycopg2.extras.execute_batch(cur, """
-            INSERT INTO pin_connections (id, schematic_version_id, component_ref, pin_number, pin_name, net_name, extras)
-            VALUES (%(id)s, %(schematic_version_id)s, %(component_ref)s, %(pin_number)s, %(pin_name)s, %(net_name)s, %(extras)s)
+            INSERT INTO pin_connections (id, schematic_version_id, component_ref, pin_number, pin_name, net_name, role)
+            VALUES (%(id)s, %(schematic_version_id)s, %(component_ref)s, %(pin_number)s, %(pin_name)s, %(net_name)s, %(role)s)
             ON CONFLICT DO NOTHING;
         """, rows)
 
@@ -519,29 +554,24 @@ def upsert_component_models(conn, sv_id: uuid.UUID, rows: List[Dict[str, Any]]):
             SET mcu_model = EXCLUDED.mcu_model;
         """, rows)
 
-# ======================================================
-# Main
-# ======================================================
-def main():
-    parser = argparse.ArgumentParser(description="Ingest circuit JSON into versioned pgvector + HW facts")
-    parser.add_argument("--json", default="/mnt/data/circuit_analysis.json", help="Path to JSON file")
-    parser.add_argument("--project", default=None, help="Project name (default: analysis.metadata.title or 'Default Project')")
-    parser.add_argument("--version-tag", default=None, help="Version tag (default: analysis.metadata.revision if present)")
-    parser.add_argument("--skip-components", action="store_true", help="Skip ingesting components")
-    parser.add_argument("--batch", type=int, default=64, help="Embedding batch size (default 64)")
-    args = parser.parse_args()
-
+def main_function(json_path: str, project: Optional[str], version_tag: Optional[str], skip_components: bool, batch_size: int):
     global INGEST_COMPONENTS
-    if args.skip_components:
+
+    sys.path.append(os.path.abspath(".."))
+
+    # Load variables from env.dev file
+    load_dotenv("../../env.dev")
+
+    if skip_components:
         INGEST_COMPONENTS = False
 
-    with open(args.json, "r", encoding="utf-8") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     analysis = data.get("analysis", {})
     metadata = analysis.get("metadata", {}) or {}
-    project_name = args.project or metadata.get("title") or "Default Project"
-    version_tag = args.version_tag or metadata.get("revision")
+    project_name = project or metadata.get("title") or "Default Project"
+    version_tag = version_tag or metadata.get("revision")
 
     components = analysis.get("components", []) if INGEST_COMPONENTS else []
     nets = analysis.get("nets", []) or []
@@ -560,8 +590,8 @@ def main():
     if INGEST_COMPONENTS and components:
         texts = [build_component_text(c) for c in components]
         rows: List[Dict[str, Any]] = []
-        for i in range(0, len(texts), args.batch):
-            chunk = texts[i:i+args.batch]
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i:i+batch_size]
             embs = embed_texts(client, chunk, MODEL_SMALL)
             for j, emb in enumerate(embs):
                 c = components[i + j]
@@ -588,8 +618,8 @@ def main():
     if nets:
         texts = [build_net_text(n) for n in nets]
         rows = []
-        for i in range(0, len(texts), args.batch):
-            chunk = texts[i:i+args.batch]
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i:i+batch_size]
             embs = embed_texts(client, chunk, MODEL_LARGE)
             for j, emb in enumerate(embs):
                 n = nets[i + j]
@@ -611,8 +641,8 @@ def main():
     if functional_groups:
         texts = [build_functional_group_text(g) for g in functional_groups]
         rows = []
-        for i in range(0, len(texts), args.batch):
-            chunk = texts[i:i+args.batch]
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i:i+batch_size]
             embs = embed_texts(client, chunk, MODEL_LARGE)
             for j, emb in enumerate(embs):
                 g = functional_groups[i + j]
@@ -647,6 +677,23 @@ def main():
         print(f"[warn] HW facts derivation skipped/partial: {e}")
 
     print(f"✅ Ingestion complete. project='{project_name}' version_tag='{version_tag}' sv_id={sv_id}")
+
+# ======================================================
+# Main
+# ======================================================
+# def main():
+#     parser = argparse.ArgumentParser(description="Ingest circuit JSON into versioned pgvector + HW facts")
+#     parser.add_argument("--json", default="/mnt/data/circuit_analysis.json", help="Path to JSON file")
+#     parser.add_argument("--project", default=None, help="Project name (default: analysis.metadata.title or 'Default Project')")
+#     parser.add_argument("--version-tag", default=None, help="Version tag (default: analysis.metadata.revision if present)")
+#     parser.add_argument("--skip-components", action="store_true", help="Skip ingesting components")
+#     parser.add_argument("--batch", type=int, default=64, help="Embedding batch size (default 64)")
+#     args = parser.parse_args()
+    
+#     main_function(args.json, args.project, args.version_tag, args.skip_components, args.batch)
+
+def main():
+    main_function("circuit_analysis.json", "the test project", "analysis.metadata.revision", False, 64)
 
 if __name__ == "__main__":
     main()
