@@ -11,11 +11,7 @@ const cognitoIdentityServiceProvider = new AWS.CognitoIdentityServiceProvider();
 
 export interface CognitoUser {
   username: string;
-  attributes: {
-    sub: string;
-    email: string;
-    [key: string]: any;
-  }[];
+  attributes: Record<string, string | undefined>[];
   groups: string[];
 }
 
@@ -38,12 +34,17 @@ export const CognitoService = {
       const groups = groupsResponse.Groups?.map(g => g.GroupName) || [];
       
       // Transform Cognito response to our format
+      const attributes = userData.UserAttributes?.map(attr => ({
+        [attr.Name!]: attr.Value,
+      })) || [];
+
+      // Ensure groups is a string[] with no undefined entries
+      const safeGroups = groups.filter((g): g is string => typeof g === 'string');
+
       return {
         username: userData.Username!,
-        attributes: userData.UserAttributes!.map(attr => ({
-          [attr.Name]: attr.Value,
-        })),
-        groups,
+        attributes,
+        groups: safeGroups,
       };
     } catch (error) {
       console.error('Error fetching user from Cognito:', error);

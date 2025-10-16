@@ -24,7 +24,7 @@ export const generateTestToken = (
       client_id: authConfig.cognito.appClientId,
       username: email,
     },
-    authConfig.jwt.secret,
-    { expiresIn: authConfig.jwt.expiresIn }
+    authConfig.jwt.secret as any,
+    { expiresIn: authConfig.jwt.expiresIn } as any
   );
 };
