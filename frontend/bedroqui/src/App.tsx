@@ -31,6 +31,7 @@ import {
   treeViewCustomizations,
 } from './dashboard/theme/customizations';
 
+import { login, logout, getIdToken } from "./auth";
 
 const xThemeComponents = {
   ...chartsCustomizations,

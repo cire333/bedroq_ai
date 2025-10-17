@@ -5,6 +5,7 @@ This project was bootstrapped with [Create React App](https://github.com/faceboo
 ## Available Scripts
 
 ### npm install
+* npm i jwt-decode
 
 npm install oidc-client-ts react-oidc-context --save
 
