@@ -1,65 +1,142 @@
+CREATE EXTENSION IF NOT EXISTS citext;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- for gen_random_uuid()
+
 -- Organizations (optional, for multi-tenant systems)
 CREATE TABLE organizations (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name CITEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Users table linked to Cognito users
+-- Users (linked to Cognito)
 CREATE TABLE users (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    cognito_sub VARCHAR(255) NOT NULL UNIQUE,
-    email VARCHAR(255) NOT NULL,
-    name VARCHAR(255),
-    organization_id BIGINT NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (organization_id) REFERENCES organizations(id)
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cognito_sub TEXT UNIQUE NOT NULL,        -- JWT 'sub' from Cognito
+  email CITEXT,
+  email_verified BOOLEAN NOT NULL DEFAULT false,
+  display_name TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Roles table
+-- Membership of users in organizations
+CREATE TABLE organization_users (
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES users(id)         ON DELETE CASCADE,
+  invited_by      UUID REFERENCES users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, user_id)
+);
+
+-- Roles are defined per organization (dynamic list)
 CREATE TABLE roles (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(50) NOT NULL UNIQUE,
-    description TEXT
-);
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  id              UUID DEFAULT gen_random_uuid(),
+  name            CITEXT NOT NULL,
+  note            TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, name)
+);              
 
--- Many-to-many mapping of users to roles
+-- Mapping of organization members to roles
 CREATE TABLE user_roles (
-    user_id BIGINT NOT NULL,
-    role_id BIGINT NOT NULL,
-    PRIMARY KEY (user_id, role_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+  organization_id UUID NOT NULL,
+  user_id         UUID NOT NULL,
+  role_id         UUID NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, user_id, role_id),
+  FOREIGN KEY (organization_id, user_id)
+    REFERENCES organization_users(organization_id, user_id) ON DELETE CASCADE,
+  FOREIGN KEY (organization_id, role_id)
+    REFERENCES roles(organization_id, id) ON DELETE CASCADE
 );
 
--- Permissions table (optional but helpful for fine-grained access)
-CREATE TABLE permissions (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT
-);
+-- updated_at helpers (optional)
+CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
 
--- Map permissions to roles
-CREATE TABLE role_permissions (
-    role_id BIGINT NOT NULL,
-    permission_id BIGINT NOT NULL,
-    PRIMARY KEY (role_id, permission_id),
-    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-    FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
-);
+CREATE TRIGGER organizations_updated_at
+BEFORE UPDATE ON organizations
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER users_updated_at
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+
+CREATE OR REPLACE FUNCTION seed_default_roles() RETURNS trigger AS $$
+BEGIN
+  INSERT INTO roles (organization_id, name) VALUES
+    (NEW.id, 'owner'),
+    (NEW.id, 'admin'),
+    (NEW.id, 'manager'),
+    (NEW.id, 'user')
+  ON CONFLICT (organization_id, name) DO NOTHING;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER organizations_seed_roles
+AFTER INSERT ON organizations
+FOR EACH ROW EXECUTE FUNCTION seed_default_roles();
+
+
+CREATE OR REPLACE FUNCTION create_org_with_owner(p_name text, p_owner_user_id uuid)
+RETURNS uuid AS $$
+DECLARE
+  v_org_id uuid;
+  v_owner_role_id uuid;
+BEGIN
+  INSERT INTO organizations (name) VALUES (p_name) RETURNING id INTO v_org_id;
+
+  -- roles are seeded by trigger; fetch the 'owner' role id
+  SELECT id INTO v_owner_role_id
+  FROM roles
+  WHERE organization_id = v_org_id AND name = 'owner';
+
+  -- add membership
+  INSERT INTO organization_users (organization_id, user_id)
+  VALUES (v_org_id, p_owner_user_id)
+  ON CONFLICT DO NOTHING;
+
+  -- grant owner role
+  INSERT INTO user_roles (organization_id, user_id, role_id)
+  VALUES (v_org_id, p_owner_user_id, v_owner_role_id)
+  ON CONFLICT DO NOTHING;
+
+  RETURN v_org_id;
+END $$ LANGUAGE plpgsql;
+
+-- Fast lookups by user across orgs
+CREATE INDEX IF NOT EXISTS idx_org_users_user ON organization_users(user_id);
+
+-- Fast “what roles does this user have in this org?”
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_org ON user_roles(user_id, organization_id);
+
+-- Fast role lookup by name within org
+CREATE INDEX IF NOT EXISTS idx_roles_org_name ON roles(organization_id, name);
+
+-- SELECT create_org_with_owner('Acme Corp', '00000000-0000-0000-0000-000000000001'::uuid);
+
 
 -- Audit logs (tracks logins, changes.)
-CREATE TABLE audit_logs (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id BIGINT,
-    action VARCHAR(255),
-    metadata JSON,
-    ip_address VARCHAR(45),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-);
+-- CREATE TABLE audit_logs (
+--     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+--     user_id BIGINT,
+--     action VARCHAR(255),
+--     metadata JSON,
+--     ip_address VARCHAR(45),
+--     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--     FOREIGN KEY (user_id) REFERENCES organizations_users(id)
+-- );
+
+
 
 
 -- Role and Permission Granularity May Not Scale
